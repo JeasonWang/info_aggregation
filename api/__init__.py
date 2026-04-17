@@ -8,10 +8,26 @@ from typing import Optional
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from database import get_session, Category, Channel, Info
 
 logger = logging.getLogger(__name__)
+
+
+class CategoryPayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    code: str = Field(..., min_length=1, max_length=50)
+    description: str = Field(default="", max_length=200)
+
+
+class ChannelPayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    code: str = Field(..., min_length=1, max_length=50)
+    base_url: str = Field(default="", max_length=255)
+    category_id: int
+    crawl_interval: int = Field(default=60, ge=1)
+    is_active: int = Field(default=1, ge=0, le=1)
 
 app = FastAPI(
     title="信息聚合系统 API",
@@ -51,22 +67,17 @@ def list_categories():
         return {
             "code": 0,
             "message": "success",
-            "data": [
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "code": c.code,
-                    "description": c.description,
-                }
-                for c in categories
-            ],
+            "data": [c.to_dict() for c in categories],
         }
     finally:
         session.close()
 
 
 @app.get("/api/channels")
-def list_channels(category_id: Optional[int] = Query(None, description="按分类ID筛选")):
+def list_channels(
+    category_id: Optional[int] = Query(None, description="按分类ID筛选"),
+    include_inactive: bool = Query(False, description="是否包含停用渠道"),
+):
     """
     获取渠道列表
     参数:
@@ -78,22 +89,156 @@ def list_channels(category_id: Optional[int] = Query(None, description="按分�
         query = session.query(Channel)
         if category_id:
             query = query.filter(Channel.category_id == category_id)
-        channels = query.all()
+        if not include_inactive:
+            query = query.filter(Channel.is_active == 1)
+        channels = query.order_by(Channel.id.asc()).all()
         return {
             "code": 0,
             "message": "success",
-            "data": [
-                {
-                    "id": ch.id,
-                    "name": ch.name,
-                    "code": ch.code,
-                    "base_url": ch.base_url,
-                    "category_id": ch.category_id,
-                    "crawl_interval": ch.crawl_interval,
-                    "is_active": ch.is_active,
-                }
-                for ch in channels
-            ],
+            "data": [ch.to_dict() for ch in channels],
+        }
+    finally:
+        session.close()
+
+
+@app.get("/api/admin/categories")
+def admin_list_categories():
+    session = get_session()
+    try:
+        categories = session.query(Category).order_by(Category.id.asc()).all()
+        return {
+            "code": 0,
+            "message": "success",
+            "data": [item.to_dict() for item in categories],
+        }
+    finally:
+        session.close()
+
+
+@app.post("/api/admin/categories")
+def admin_create_category(payload: CategoryPayload):
+    session = get_session()
+    try:
+        if session.query(Category).filter(Category.name == payload.name).first():
+            raise HTTPException(status_code=400, detail="分类名称已存在")
+        if session.query(Category).filter(Category.code == payload.code).first():
+            raise HTTPException(status_code=400, detail="分类编码已存在")
+
+        category = Category(
+            name=payload.name.strip(),
+            code=payload.code.strip(),
+            description=payload.description.strip(),
+        )
+        session.add(category)
+        session.commit()
+        session.refresh(category)
+        return {
+            "code": 0,
+            "message": "success",
+            "data": category.to_dict(),
+        }
+    finally:
+        session.close()
+
+
+@app.put("/api/admin/categories/{category_id}")
+def admin_update_category(category_id: int, payload: CategoryPayload):
+    session = get_session()
+    try:
+        category = session.query(Category).filter(Category.id == category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="分类不存在")
+
+        if session.query(Category).filter(Category.name == payload.name, Category.id != category_id).first():
+            raise HTTPException(status_code=400, detail="分类名称已存在")
+        if session.query(Category).filter(Category.code == payload.code, Category.id != category_id).first():
+            raise HTTPException(status_code=400, detail="分类编码已存在")
+
+        category.name = payload.name.strip()
+        category.code = payload.code.strip()
+        category.description = payload.description.strip()
+        session.commit()
+        session.refresh(category)
+        return {
+            "code": 0,
+            "message": "success",
+            "data": category.to_dict(),
+        }
+    finally:
+        session.close()
+
+
+@app.get("/api/admin/channels")
+def admin_list_channels():
+    session = get_session()
+    try:
+        channels = session.query(Channel).order_by(Channel.id.asc()).all()
+        return {
+            "code": 0,
+            "message": "success",
+            "data": [item.to_dict() for item in channels],
+        }
+    finally:
+        session.close()
+
+
+@app.post("/api/admin/channels")
+def admin_create_channel(payload: ChannelPayload):
+    session = get_session()
+    try:
+        if not session.query(Category).filter(Category.id == payload.category_id).first():
+            raise HTTPException(status_code=400, detail="分类不存在")
+        if session.query(Channel).filter(Channel.name == payload.name).first():
+            raise HTTPException(status_code=400, detail="渠道名称已存在")
+        if session.query(Channel).filter(Channel.code == payload.code).first():
+            raise HTTPException(status_code=400, detail="渠道编码已存在")
+
+        channel = Channel(
+            name=payload.name.strip(),
+            code=payload.code.strip(),
+            base_url=payload.base_url.strip(),
+            category_id=payload.category_id,
+            crawl_interval=payload.crawl_interval,
+            is_active=payload.is_active,
+        )
+        session.add(channel)
+        session.commit()
+        session.refresh(channel)
+        return {
+            "code": 0,
+            "message": "success",
+            "data": channel.to_dict(),
+        }
+    finally:
+        session.close()
+
+
+@app.put("/api/admin/channels/{channel_id}")
+def admin_update_channel(channel_id: int, payload: ChannelPayload):
+    session = get_session()
+    try:
+        channel = session.query(Channel).filter(Channel.id == channel_id).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="渠道不存在")
+        if not session.query(Category).filter(Category.id == payload.category_id).first():
+            raise HTTPException(status_code=400, detail="分类不存在")
+        if session.query(Channel).filter(Channel.name == payload.name, Channel.id != channel_id).first():
+            raise HTTPException(status_code=400, detail="渠道名称已存在")
+        if session.query(Channel).filter(Channel.code == payload.code, Channel.id != channel_id).first():
+            raise HTTPException(status_code=400, detail="渠道编码已存在")
+
+        channel.name = payload.name.strip()
+        channel.code = payload.code.strip()
+        channel.base_url = payload.base_url.strip()
+        channel.category_id = payload.category_id
+        channel.crawl_interval = payload.crawl_interval
+        channel.is_active = payload.is_active
+        session.commit()
+        session.refresh(channel)
+        return {
+            "code": 0,
+            "message": "success",
+            "data": channel.to_dict(),
         }
     finally:
         session.close()

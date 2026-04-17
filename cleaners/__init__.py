@@ -87,7 +87,7 @@ def clean_info_item(item: dict) -> dict:
         except ValueError:
             event_time = datetime.now()
 
-    return {
+    result = {
         "source_id": source_id,
         "title": title,
         "content": content,
@@ -98,6 +98,10 @@ def clean_info_item(item: dict) -> dict:
         "indicator_name": item.get("indicator_name", "")[:100],
         "indicator_value": item.get("indicator_value", "")[:100],
     }
+    for key, value in item.items():
+        if key.startswith("_") and key not in result:
+            result[key] = value
+    return result
 
 
 def clean_info_list(items: list) -> list:

@@ -3,6 +3,8 @@
 爬取经济数据（金价、油价等），并深入爬取详情页获取完整分析内容
 """
 import hashlib
+import json
+import re
 from datetime import datetime
 
 from .base import BaseCrawler
@@ -24,19 +26,14 @@ class EastmoneyCrawler(BaseCrawler):
         super().__init__("eastmoney", "东方财富网")
 
     def _fetch_indicator(self, url: str, name: str, unit: str) -> dict:
-        """
-        爬取单个经济指标
-        参数:
-            url: API地址
-            name: 指标名称
-            unit: 指标单位
-        返回: 标准化信息字典
-        """
         try:
             headers = self._build_headers()
             headers["Referer"] = "https://quote.eastmoney.com/"
             data = self.fetch_json(url, headers=headers)
-            d = data.get("data", {})
+            d = data.get("data")
+            if not d or not isinstance(d, dict):
+                self.logger.warning(f"东方财富{name}API返回数据为空")
+                return None
             current = d.get("f43", 0)
             change = d.get("f170", 0)
             if current:
@@ -70,10 +67,6 @@ class EastmoneyCrawler(BaseCrawler):
             return None
 
     def crawl(self) -> list:
-        """
-        爬取东方财富经济数据
-        返回: 标准化信息列表
-        """
         results = []
         indicators = [
             (self.GOLD_API, "国际金价", "美元/盎司"),
@@ -87,13 +80,6 @@ class EastmoneyCrawler(BaseCrawler):
         return results
 
     def fetch_detail(self, source_url: str, item: dict) -> str:
-        """
-        爬取东方财富相关新闻详情，补充经济指标分析内容
-        参数:
-            source_url: 来源URL
-            item: 基础信息字典
-        返回: 完整内容文本
-        """
         try:
             indicator_name = item.get("indicator_name", "")
             if not indicator_name:
@@ -103,11 +89,9 @@ class EastmoneyCrawler(BaseCrawler):
             headers["Accept"] = "application/json, text/plain, */*"
 
             try:
-                import json
                 search_url = f"https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param={json.dumps({'uid':'','keyword':indicator_name,'type':['cmsArticleWebOld'],'client':'web','clientType':'web','clientVersion':'curr','param':{'cmsArticleWebOld':{'searchScope':'default','sort':'default','pageIndex':1,'pageSize':3}}}, ensure_ascii=False)}"
                 response = self.fetch(search_url, headers=headers)
                 text = response.text
-                import re
                 json_match = re.search(r'jQuery\((.*)\)', text, re.DOTALL)
                 if json_match:
                     search_data = json.loads(json_match.group(1))
@@ -116,16 +100,27 @@ class EastmoneyCrawler(BaseCrawler):
                         article = articles[0]
                         article_url = article.get("url", "")
                         if article_url:
-                            art_response = self.fetch(article_url, headers=headers)
-                            art_text = self._extract_text_from_html(art_response.text)
-                            if len(art_text) >= 100:
-                                return art_text[:500]
+                            try:
+                                art_response = self.fetch(article_url, headers=headers)
+                                art_text = self._extract_text_from_html(art_response.text)
+                                if len(art_text) >= 50:
+                                    return art_text[:500]
+                            except Exception:
+                                pass
                         content = article.get("content", "")
                         if content:
                             content = re.sub(r'<[^>]+>', '', content)
                             content = re.sub(r'\s+', ' ', content).strip()
-                            if len(content) >= 100:
+                            if len(content) >= 50:
                                 return content[:500]
+                        title = article.get("title", "")
+                        summary = article.get("content", article.get("description", ""))
+                        if summary:
+                            summary = re.sub(r'<[^>]+>', '', summary)
+                            summary = re.sub(r'\s+', ' ', summary).strip()
+                        combined = f"{title}。{summary}" if title and summary else (title or summary or "")
+                        if len(combined) >= 50:
+                            return combined[:500]
             except Exception:
                 pass
 

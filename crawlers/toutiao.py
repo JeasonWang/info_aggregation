@@ -17,16 +17,13 @@ class ToutiaoCrawler(BaseCrawler):
     """
 
     TREND_API = "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"
-    DETAIL_API = "https://www.toutiao.com/article/{item_id}/"
+    DETAIL_API = "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"
+    ARTICLE_API = "https://www.toutiao.com/article/{article_id}/"
 
     def __init__(self):
         super().__init__("toutiao", "今日头条")
 
     def crawl(self) -> list:
-        """
-        爬取今日头条热点
-        返回: 标准化信息列表
-        """
         results = []
         try:
             headers = self._build_headers()
@@ -39,66 +36,89 @@ class ToutiaoCrawler(BaseCrawler):
                     continue
                 cluster_id = item.get("ClusterId", "")
                 source_id = hashlib.md5(f"toutiao_{cluster_id}".encode()).hexdigest()[:16]
+                hot_desc = item.get("HotDesc", "")
+                label = item.get("Label", "")
+                content_parts = [title]
+                if hot_desc and hot_desc != title:
+                    content_parts.append(hot_desc)
+                if label and label != title:
+                    content_parts.append(label)
+                content = "。".join(content_parts)
                 results.append({
                     "source_id": source_id,
                     "title": title[:40],
-                    "content": item.get("Title", "")[:500],
+                    "content": content[:500],
                     "source_url": f"https://www.toutiao.com/trending/{cluster_id}/",
                     "event_time": datetime.now(),
                     "core_entity": title[:20],
                     "location": "",
                     "indicator_name": "",
                     "indicator_value": "",
+                    "_cluster_id": cluster_id,
+                    "_hot_desc": hot_desc,
+                    "_label": label,
                 })
         except Exception as e:
             self.logger.error(f"头条爬取异常: {e}")
         return results
 
     def fetch_detail(self, source_url: str, item: dict) -> str:
-        """
-        爬取头条文章详情页，获取完整内容
-        参数:
-            source_url: 文章URL
-            item: 基础信息字典
-        返回: 完整内容文本
-        """
         try:
             headers = self._build_headers()
             headers["Referer"] = "https://www.toutiao.com/"
             headers["Accept"] = "application/json, text/plain, */*"
 
-            try:
-                trend_detail_api = f"https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"
-                data = self.fetch_json(trend_detail_api, headers=headers)
-                items = data.get("data", [])
-                title = item.get("title", "")
-                for trend_item in items:
-                    if title in trend_item.get("Title", ""):
-                        cluster_id = trend_item.get("ClusterId", "")
-                        detail_api = f"https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc&cluster_id={cluster_id}"
-                        detail_data = self.fetch_json(detail_api, headers=headers)
-                        articles = detail_data.get("data", [])
-                        if articles:
-                            first = articles[0]
-                            content = first.get("Abstract", "")
-                            if content and len(content) >= 100:
-                                return content[:500]
-                            content = first.get("Content", "")
-                            if content:
-                                content = re.sub(r'<[^>]+>', '', content)
-                                content = re.sub(r'\s+', ' ', content).strip()
-                                if len(content) >= 100:
-                                    return content[:500]
-                        break
-            except Exception:
-                pass
+            cluster_id = item.get("_cluster_id", "")
+            if not cluster_id:
+                cluster_id_match = re.search(r'/trending/(\d+)', source_url)
+                if cluster_id_match:
+                    cluster_id = cluster_id_match.group(1)
+
+            if cluster_id:
+                try:
+                    detail_api = f"{self.DETAIL_API}&cluster_id={cluster_id}"
+                    detail_data = self.fetch_json(detail_api, headers=headers)
+                    articles = detail_data.get("data", [])
+                    target_item = None
+                    for art in articles:
+                        if str(art.get("ClusterId", "")) == str(cluster_id):
+                            target_item = art
+                            break
+                    if not target_item and articles:
+                        target_item = articles[0]
+
+                    if target_item:
+                        title = target_item.get("Title", "")
+                        hot_desc = target_item.get("HotDesc", "")
+                        abstract = target_item.get("Abstract", "")
+                        label = target_item.get("Label", "")
+                        content_parts = []
+                        if title:
+                            content_parts.append(title)
+                        if hot_desc and hot_desc != title:
+                            content_parts.append(hot_desc)
+                        if abstract and abstract != title and abstract != hot_desc:
+                            content_parts.append(abstract)
+                        if label and label != title and label != hot_desc:
+                            content_parts.append(f"标签: {label}")
+                        combined = "。".join(content_parts)
+                        if len(combined) >= 50:
+                            return combined[:500]
+                except Exception:
+                    pass
 
             try:
-                response = self.fetch(source_url, headers=headers)
-                html = response.text
-                text = self._extract_text_from_html(html)
-                if len(text) >= 100:
-                    return text[:500]
+                search_url = f"https://www.toutiao.com/api/search/content/?keyword={item.get('title', '')}&count=5"
+                search_data = self.fetch_json(search_url, headers=headers)
+                search_items = search_data.get("data", [])
+                if search_items:
+                    for s_item in search_items[:3]:
+                        s_content = s_item.get("abstract", s_item.get("content", ""))
+                        if s_content:
+                            s_content = re.sub(r'<[^>]+>', '', s_content)
+                            s_content = re.sub(r'\s+', ' ', s_content).strip()
+                            if len(s_content) >= 50:
+                                return s_content[:500]
             except Exception:
                 pass
 

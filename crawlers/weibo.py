@@ -12,54 +12,134 @@ from .base import BaseCrawler
 class WeiboCrawler(BaseCrawler):
     """
     微博热搜爬虫
-    通过微博热搜API获取实时热点事件
+    通过微博移动端页面获取实时热点事件
     爬取频率：每30分钟一次
     """
 
     HOT_SEARCH_API = "https://weibo.com/ajax/side/hotSearch"
-    DETAIL_API = "https://weibo.com/ajax/statuses/show"
+    MOBILE_HOT_API = "https://m.weibo.cn/api/container/getIndex?containerid=106003type%3D25%26t%3D3%26disable_hot%3D1%26filter_type%3Drealtimehot"
+    HOT_BAND_API = "https://weibo.com/ajax/statuses/hot_band"
 
     def __init__(self):
         super().__init__("weibo", "微博")
 
     def crawl(self) -> list:
-        """
-        爬取微博热搜
-        返回: 标准化信息列表
-        """
         results = []
         try:
-            data = self.fetch_json(self.HOT_SEARCH_API)
-            realtime = data.get("data", {}).get("realtime", [])
-            for item in realtime[:20]:
-                word = item.get("word", "").strip()
-                if not word:
-                    continue
-                note = item.get("note", word)
-                source_id = hashlib.md5(f"weibo_{word}".encode()).hexdigest()[:16]
-                results.append({
-                    "source_id": source_id,
-                    "title": word[:40],
-                    "content": note[:500] if note else word[:500],
-                    "source_url": f"https://s.weibo.com/weibo?q=%23{word}%23",
-                    "event_time": datetime.now(),
-                    "core_entity": word[:20],
-                    "location": "",
-                    "indicator_name": "",
-                    "indicator_value": "",
-                })
+            results = self._crawl_mobile_api()
+            if results:
+                return results
+        except Exception:
+            pass
+
+        try:
+            results = self._crawl_hot_band()
+            if results:
+                return results
+        except Exception:
+            pass
+
+        try:
+            results = self._crawl_web_page()
+            if results:
+                return results
         except Exception as e:
             self.logger.error(f"微博爬取异常: {e}")
         return results
 
+    def _crawl_mobile_api(self) -> list:
+        headers = self._build_headers()
+        headers["Referer"] = "https://m.weibo.cn/"
+        headers["Accept"] = "application/json, text/plain, */*"
+        data = self.fetch_json(self.MOBILE_HOT_API, headers=headers)
+        cards = data.get("data", {}).get("cards", [])
+        results = []
+        for card in cards:
+            card_group = card.get("card_group", [])
+            for item in card_group:
+                desc = item.get("desc", "")
+                title = desc.strip() if desc else ""
+                if not title:
+                    continue
+                source_id = hashlib.md5(f"weibo_{title}".encode()).hexdigest()[:16]
+                results.append({
+                    "source_id": source_id,
+                    "title": title[:40],
+                    "content": title[:500],
+                    "source_url": f"https://s.weibo.com/weibo?q=%23{title}%23",
+                    "event_time": datetime.now(),
+                    "core_entity": title[:20],
+                    "location": "",
+                    "indicator_name": "",
+                    "indicator_value": "",
+                })
+            if len(results) >= 20:
+                break
+        return results[:20]
+
+    def _crawl_hot_band(self) -> list:
+        headers = self._build_headers()
+        headers["Referer"] = "https://weibo.com/"
+        headers["Accept"] = "application/json, text/plain, */*"
+        headers["X-Requested-With"] = "XMLHttpRequest"
+        data = self.fetch_json(self.HOT_BAND_API, headers=headers)
+        band_list = data.get("data", {}).get("band_list", [])
+        results = []
+        for band in band_list[:20]:
+            word = band.get("word", "").strip()
+            if not word:
+                continue
+            note = band.get("note", word)
+            raw_text = band.get("raw_text", "")
+            desc = band.get("desc", "")
+            content_parts = [note]
+            if raw_text and raw_text != note:
+                content_parts.append(raw_text)
+            if desc and desc != note and desc != raw_text:
+                content_parts.append(desc)
+            content = "。".join(content_parts)
+            source_id = hashlib.md5(f"weibo_{word}".encode()).hexdigest()[:16]
+            results.append({
+                "source_id": source_id,
+                "title": word[:40],
+                "content": content[:500],
+                "source_url": f"https://s.weibo.com/weibo?q=%23{word}%23",
+                "event_time": datetime.now(),
+                "core_entity": word[:20],
+                "location": "",
+                "indicator_name": "",
+                "indicator_value": "",
+            })
+        return results
+
+    def _crawl_web_page(self) -> list:
+        headers = self._build_headers()
+        headers["Referer"] = "https://s.weibo.com/"
+        url = "https://s.weibo.com/top/summary"
+        response = self.fetch(url, headers=headers)
+        html = response.text
+        results = []
+        pattern = r'<td class="td-02">\s*<a[^>]*>([^<]+)</a>'
+        matches = re.findall(pattern, html, re.DOTALL)
+        for word in matches[:20]:
+            word = word.strip()
+            if not word:
+                continue
+            source_id = hashlib.md5(f"weibo_{word}".encode()).hexdigest()[:16]
+            results.append({
+                "source_id": source_id,
+                "title": word[:40],
+                "content": word[:500],
+                "source_url": f"https://s.weibo.com/weibo?q=%23{word}%23",
+                "event_time": datetime.now(),
+                "core_entity": word[:20],
+                "location": "",
+                "indicator_name": "",
+                "indicator_value": "",
+            })
+        return results
+
     def fetch_detail(self, source_url: str, item: dict) -> str:
-        """
-        爬取微博话题详情页，获取完整事件描述
-        参数:
-            source_url: 话题搜索页URL
-            item: 基础信息字典
-        返回: 完整内容文本
-        """
         try:
             headers = self._build_headers()
             headers["Referer"] = "https://weibo.com/"
@@ -67,52 +147,41 @@ class WeiboCrawler(BaseCrawler):
             headers["X-Requested-With"] = "XMLHttpRequest"
 
             word = item.get("title", "")
-            search_api = f"https://weibo.com/ajax/side/hotSearch"
-            detail_api = f"https://weibo.com/ajax/statuses/hot_band"
-            try:
-                data = self.fetch_json(detail_api, headers=headers)
-                band_list = data.get("data", {}).get("band_list", [])
-                for band in band_list:
-                    word_key = band.get("word", "")
-                    if word_key and word in word_key:
-                        note = band.get("note", "")
-                        raw_text = band.get("raw_text", "")
-                        desc = band.get("desc", "")
-                        parts = []
-                        if note:
-                            parts.append(note)
-                        if raw_text and raw_text != note:
-                            parts.append(raw_text)
-                        if desc and desc != note and desc != raw_text:
-                            parts.append(desc)
-                        full_text = "。".join(parts)
-                        if len(full_text) >= 100:
-                            return full_text[:500]
-            except Exception:
-                pass
 
             try:
                 search_detail = f"https://weibo.com/ajax/search/topic?query={word}&page=1"
                 data = self.fetch_json(search_detail, headers=headers)
                 statuses = data.get("data", {}).get("statuses", [])
                 if statuses:
-                    top_status = statuses[0]
-                    text_data = top_status.get("text", "")
-                    text_data = re.sub(r'<[^>]+>', '', text_data)
-                    text_data = re.sub(r'\s+', ' ', text_data).strip()
-                    if len(text_data) >= 100:
-                        return text_data[:500]
-                    long_text = top_status.get("isLongText", False)
-                    if long_text:
-                        mid = top_status.get("mid", top_status.get("id", ""))
-                        if mid:
-                            longtext_api = f"https://weibo.com/ajax/statuses/longtext?id={mid}"
-                            lt_data = self.fetch_json(longtext_api, headers=headers)
-                            lt_text = lt_data.get("data", {}).get("longTextContent", "")
-                            lt_text = re.sub(r'<[^>]+>', '', lt_text)
-                            lt_text = re.sub(r'\s+', ' ', lt_text).strip()
-                            if len(lt_text) >= 100:
-                                return lt_text[:500]
+                    text_parts = []
+                    for status in statuses[:3]:
+                        text_data = status.get("text", "")
+                        text_data = re.sub(r'<[^>]+>', '', text_data)
+                        text_data = re.sub(r'\s+', ' ', text_data).strip()
+                        if text_data:
+                            text_parts.append(text_data)
+                    combined = " ".join(text_parts)
+                    if len(combined) >= 50:
+                        return combined[:500]
+            except Exception:
+                pass
+
+            try:
+                mobile_url = f"https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D1%26q%3D{word}"
+                data = self.fetch_json(mobile_url, headers=headers)
+                cards = data.get("data", {}).get("cards", [])
+                text_parts = []
+                for card in cards[:3]:
+                    mblog = card.get("mblog", {})
+                    if mblog:
+                        text = mblog.get("text", "")
+                        text = re.sub(r'<[^>]+>', '', text)
+                        text = re.sub(r'\s+', ' ', text).strip()
+                        if text:
+                            text_parts.append(text)
+                combined = " ".join(text_parts)
+                if len(combined) >= 50:
+                    return combined[:500]
             except Exception:
                 pass
 

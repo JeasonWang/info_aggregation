@@ -33,6 +33,13 @@ class BaseCrawler(ABC):
         self.channel_name = channel_name
         self.logger = logging.getLogger(f"crawler.{channel_code}")
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=10,
+            max_retries=1,
+        )
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def _get_random_ua(self) -> str:
         """随机获取User-Agent，防止被反爬"""
@@ -48,19 +55,21 @@ class BaseCrawler(ABC):
             "Connection": "keep-alive",
         }
 
-    def fetch(self, url: str, params: dict = None, headers: dict = None) -> requests.Response:
+    def fetch(self, url: str, params: dict = None, headers: dict = None, timeout: int = None) -> requests.Response:
         """
         发送HTTP GET请求，内置重试机制
         参数:
             url: 请求URL
             params: 查询参数
             headers: 自定义请求头
+            timeout: 超时时间(秒)，默认使用配置值
         返回:
             requests.Response对象
         异常:
             请求失败超过重试次数后抛出异常
         """
         req_headers = headers or self._build_headers()
+        req_timeout = timeout or CRAWLER_REQUEST_TIMEOUT
         last_exception = None
 
         for attempt in range(1, CRAWLER_RETRY_TIMES + 1):
@@ -70,11 +79,30 @@ class BaseCrawler(ABC):
                     url,
                     params=params,
                     headers=req_headers,
-                    timeout=CRAWLER_REQUEST_TIMEOUT,
+                    timeout=req_timeout,
                 )
                 response.raise_for_status()
                 time.sleep(random.uniform(0.5, 2.0))
                 return response
+            except requests.Timeout as e:
+                last_exception = e
+                self.logger.warning(f"请求超时(第{attempt}次): {url}")
+                if attempt < CRAWLER_RETRY_TIMES:
+                    time.sleep(CRAWLER_RETRY_INTERVAL / 60)
+            except requests.ConnectionError as e:
+                last_exception = e
+                self.logger.warning(f"连接失败(第{attempt}次): {url} - {e}")
+                if attempt < CRAWLER_RETRY_TIMES:
+                    time.sleep(CRAWLER_RETRY_INTERVAL / 60)
+            except requests.HTTPError as e:
+                status_code = e.response.status_code if e.response is not None else 0
+                if status_code in (401, 403, 404):
+                    self.logger.warning(f"HTTP {status_code}，不重试: {url}")
+                    raise
+                last_exception = e
+                self.logger.warning(f"HTTP错误(第{attempt}次): {status_code} - {url}")
+                if attempt < CRAWLER_RETRY_TIMES:
+                    time.sleep(CRAWLER_RETRY_INTERVAL / 60)
             except requests.RequestException as e:
                 last_exception = e
                 self.logger.warning(f"请求失败(第{attempt}次): {e}")
@@ -84,18 +112,23 @@ class BaseCrawler(ABC):
         self.logger.error(f"请求{url}失败，已重试{CRAWLER_RETRY_TIMES}次")
         raise last_exception
 
-    def fetch_json(self, url: str, params: dict = None, headers: dict = None) -> dict:
+    def fetch_json(self, url: str, params: dict = None, headers: dict = None, timeout: int = None) -> dict:
         """
         发送HTTP GET请求并返回JSON数据
         参数:
             url: 请求URL
             params: 查询参数
             headers: 自定义请求头
+            timeout: 超时时间(秒)
         返回:
             解析后的JSON字典
         """
-        response = self.fetch(url, params=params, headers=headers)
-        return response.json()
+        response = self.fetch(url, params=params, headers=headers, timeout=timeout)
+        try:
+            return response.json()
+        except ValueError:
+            self.logger.warning(f"JSON解析失败: {url}")
+            return {}
 
     @abstractmethod
     def crawl(self) -> list:
@@ -133,7 +166,7 @@ class BaseCrawler(ABC):
             return ""
         try:
             headers = self._build_headers()
-            response = self.fetch(source_url, headers=headers)
+            response = self.fetch(source_url, headers=headers, timeout=15)
             return self._extract_text_from_html(response.text)
         except Exception as e:
             self.logger.warning(f"详情页爬取失败 [{source_url}]: {e}")
@@ -208,7 +241,14 @@ class BaseCrawler(ABC):
                 return detail[:500], "success", ""
             else:
                 return detail[:500] if detail else "", "failed", f"详情内容过短(仅{len(detail.strip()) if detail else 0}字)"
+        except requests.Timeout:
+            return "", "failed", "详情页请求超时"
+        except requests.ConnectionError:
+            return "", "failed", "详情页连接失败"
+        except requests.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else 0
+            return "", "failed", f"详情页HTTP错误({status_code})"
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {str(e)}"
+            error_msg = f"{type(e).__name__}: {str(e)[:200]}"
             self.logger.warning(f"详情爬取异常 [{source_url}]: {error_msg}")
             return "", "failed", error_msg

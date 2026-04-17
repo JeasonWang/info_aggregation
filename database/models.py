@@ -28,6 +28,16 @@ class Category(Base):
     def __repr__(self):
         return f"<Category(id={self.id}, name='{self.name}', code='{self.code}')>"
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "code": self.code,
+            "description": self.description,
+            "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "updated_at": self.updated_at.strftime("%Y-%m-%d %H:%M:%S") if self.updated_at else None,
+        }
+
 
 class Channel(Base):
     """
@@ -51,6 +61,20 @@ class Channel(Base):
 
     def __repr__(self):
         return f"<Channel(id={self.id}, name='{self.name}', code='{self.code}')>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "code": self.code,
+            "base_url": self.base_url,
+            "category_id": self.category_id,
+            "category_name": self.category_rel.name if self.category_rel else "",
+            "crawl_interval": self.crawl_interval,
+            "is_active": self.is_active,
+            "created_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "updated_at": self.updated_at.strftime("%Y-%m-%d %H:%M:%S") if self.updated_at else None,
+        }
 
 
 class Info(Base):

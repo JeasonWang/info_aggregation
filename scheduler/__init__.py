@@ -3,7 +3,9 @@
 使用APScheduler实现定时爬取调度
 """
 import logging
-from datetime import datetime
+import time
+import random
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -153,6 +155,8 @@ def _fetch_details_for_items(channel_code: str, saved_ids: list):
                 info.detail_fetch_error = error_msg
                 logger.warning(f"详情爬取失败 [ID={info_id}]: {error_msg}，保留原始内容({len(original_content)}字)")
 
+            time.sleep(random.uniform(1.0, 3.0))
+
         session.commit()
         logger.info(f"渠道 {channel_code}: 详情爬取完成，共处理{len(saved_ids)}条")
     except Exception as e:
@@ -223,6 +227,27 @@ def crawl_ai():
     crawl_by_category(CATEGORY_AI)
 
 
+def cleanup_expired_infos():
+    """
+    清理两周前创建的信息数据
+    """
+    cutoff = datetime.now() - timedelta(days=14)
+    session = get_session()
+    try:
+        deleted_count = (
+            session.query(Info)
+            .filter(Info.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+        logger.info(f"历史数据清理完成，删除{deleted_count}条，截止时间: {cutoff.strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"历史数据清理失败: {e}", exc_info=True)
+    finally:
+        session.close()
+
+
 def setup_scheduler() -> BackgroundScheduler:
     """
     初始化并配置定时任务调度器
@@ -271,6 +296,15 @@ def setup_scheduler() -> BackgroundScheduler:
         trigger=IntervalTrigger(minutes=SCHEDULER_AI_INTERVAL),
         id="crawl_ai",
         name="AI大模型动向爬取",
+        max_instances=1,
+        misfire_grace_time=300,
+    )
+
+    scheduler.add_job(
+        cleanup_expired_infos,
+        trigger=IntervalTrigger(hours=24),
+        id="cleanup_expired_infos",
+        name="清理两周前历史数据",
         max_instances=1,
         misfire_grace_time=300,
     )
