@@ -1,4 +1,4 @@
-name: Build And Deploy
+name: Deploy Info Aggregation
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 env:
   DOCKERHUB_NAMESPACE: jeason1234
   BACKEND_IMAGE: jeason1234/info-aggregation
-  FRONTEND_IMAGE: jeason1234/info-max
 
 jobs:
   build-and-push:
@@ -27,8 +26,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker Metadata For Backend
-        id: backend-meta
+      - name: Docker Metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.BACKEND_IMAGE }}
@@ -36,15 +35,13 @@ jobs:
             type=raw,value=latest
             type=sha
 
-      - name: Build And Push Backend
+      - name: Build And Push Backend Image
         uses: docker/build-push-action@v6
         with:
-          context: ./Info_aggregation
+          context: .
           push: true
-          tags: ${{ steps.backend-meta.outputs.tags }}
-          labels: ${{ steps.backend-meta.outputs.labels }}
-
-      
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
     runs-on: ubuntu-latest

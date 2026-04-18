@@ -1,0 +1,21 @@
+services:
+  info-aggregation:
+    image: ${DOCKERHUB_NAMESPACE:-jeason1234}/info-aggregation:${IMAGE_TAG:-latest}
+    container_name: info-aggregation
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_DIR: /app/data
+      LOG_DIR: /app/data/logs
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DB_TYPE: ${DB_TYPE:-sqlite}
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      DB_NAME: ${DB_NAME:-info_aggregation}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data

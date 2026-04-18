@@ -5,6 +5,7 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
 
 # ==================== 数据库配置 ====================
 DB_TYPE = os.getenv("DB_TYPE", "sqlite")
@@ -15,7 +16,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "info_aggregation")
 
 if DB_TYPE == "sqlite":
-    SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'info_aggregation.db')}"
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'info_aggregation.db')}"
 else:
     SQLALCHEMY_DATABASE_URL = (
         f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -48,7 +49,7 @@ SCHEDULER_TECH_INTERVAL = 30
 SCHEDULER_AI_INTERVAL = 30
 
 # ==================== 日志配置 ====================
-LOG_DIR = os.path.join(BASE_DIR, "logs")
+LOG_DIR = os.getenv("LOG_DIR", os.path.join(DATA_DIR, "logs"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

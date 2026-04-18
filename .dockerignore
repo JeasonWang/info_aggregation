@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+logs/
+info_aggregation.db
+sql/__pycache__/
+api/__pycache__/
+database/__pycache__/
+cleaners/__pycache__/
+crawlers/__pycache__/
+scheduler/__pycache__/
