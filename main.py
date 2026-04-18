@@ -71,7 +71,7 @@ def main():
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 60)
-    logger.info("信息聚合系统 Info_aggregation 启动中...")
+    logger.info("信息聚合系统 Info_aggregation 启动中 ...")
     logger.info("=" * 60)
 
     # 1. 初始化数据库和模拟数据
