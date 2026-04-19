@@ -2,10 +2,7 @@
 
 在后端仓库 `Settings -> Secrets and variables -> Actions` 中配置以下内容。
 
-## DockerHub
-
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
+本方案不依赖 DockerHub。GitHub Actions 会在 CI 中构建镜像，然后把镜像 tar.gz 包直接上传到服务器，再由服务器执行 `docker load`。
 
 ## 服务器
 

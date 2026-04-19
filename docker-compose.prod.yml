@@ -1,6 +1,6 @@
 services:
   info-aggregation:
-    image: ${DOCKERHUB_NAMESPACE:-jeason1234}/info-aggregation:${IMAGE_TAG:-latest}
+    image: info-aggregation:latest
     container_name: info-aggregation
     restart: unless-stopped
     ports:

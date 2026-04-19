@@ -6,12 +6,8 @@ on:
       - main
   workflow_dispatch:
 
-env:
-  DOCKERHUB_NAMESPACE: jeason1234
-  BACKEND_IMAGE: jeason1234/info-aggregation
-
 jobs:
-  build-and-push:
+  build-and-package:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,50 +16,31 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login To DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build Backend Image
+        run: docker build -t info-aggregation:latest .
 
-      - name: Docker Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.BACKEND_IMAGE }}
-          tags: |
-            type=raw,value=latest
-            type=sha
+      - name: Export Backend Image
+        run: docker save info-aggregation:latest | gzip > info-aggregation-image.tar.gz
 
-      - name: Build And Push Backend Image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Prepare SSH Key
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%b' '${{ secrets.SERVER_SSH_KEY }}' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
       - name: Copy Deploy Files To Server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "docker-compose.prod.yml"
+          key_path: ~/.ssh/deploy_key
+          source: "docker-compose.prod.yml,info-aggregation-image.tar.gz"
           target: ${{ secrets.SERVER_DEPLOY_PATH }}
 
       - name: Deploy On Server
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_TAG: latest
-          DOCKERHUB_NAMESPACE: ${{ env.DOCKERHUB_NAMESPACE }}
           DB_TYPE: ${{ secrets.DB_TYPE }}
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
@@ -71,22 +48,17 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_NAME: ${{ secrets.DB_NAME }}
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: IMAGE_TAG,DOCKERHUB_NAMESPACE,DB_TYPE,DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,LOG_LEVEL,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,SERVER_DEPLOY_PATH
+          key_path: ~/.ssh/deploy_key
+          envs: DB_TYPE,DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,LOG_LEVEL,SERVER_DEPLOY_PATH
           script: |
             set -e
             mkdir -p "$SERVER_DEPLOY_PATH"
             cd "$SERVER_DEPLOY_PATH"
-            docker login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_TOKEN"
             cat > .env <<EOF
-            DOCKERHUB_NAMESPACE=$DOCKERHUB_NAMESPACE
-            IMAGE_TAG=$IMAGE_TAG
             DB_TYPE=${DB_TYPE:-sqlite}
             DB_HOST=$DB_HOST
             DB_PORT=${DB_PORT:-3306}
@@ -95,6 +67,6 @@ jobs:
             DB_NAME=${DB_NAME:-info_aggregation}
             LOG_LEVEL=${LOG_LEVEL:-INFO}
             EOF
-            docker compose -f docker-compose.prod.yml --env-file .env pull
-            docker compose -f docker-compose.prod.yml --env-file .env up -d
+            gunzip -c info-aggregation-image.tar.gz | docker load
+            docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans
             docker image prune -f
